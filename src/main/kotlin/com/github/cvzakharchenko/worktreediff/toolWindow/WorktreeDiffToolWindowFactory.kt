@@ -210,7 +210,6 @@ private class WorktreeDiffPanel(
             clearFiles(state.error)
         }
 
-        fileTree.setPaintBusy(false)
         setControlsEnabled(enabled = true)
     }
 
@@ -235,14 +234,12 @@ private class WorktreeDiffPanel(
         (0 until worktreeModel.size).map { worktreeModel.getElementAt(it) }
 
     private fun clearFiles(message: String) {
-        fileTree.setPaintBusy(false)
         fileTree.clear()
         fileTree.setEmptyText(message)
     }
 
     private fun setBusy(message: String) {
         fileTree.setEmptyText(message)
-        fileTree.setPaintBusy(true)
         setControlsEnabled(false)
     }
 
