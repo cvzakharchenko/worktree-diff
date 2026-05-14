@@ -7,4 +7,6 @@
 - Added the Worktree Diff tool window for comparing the current checkout with another local Git worktree.
 - Added Git-aware comparison of head differences, tracked local changes, and untracked non-ignored files.
 - Added built-in IntelliJ diff opening for selected file comparisons.
-- Added a filterable file tree with icons, path display and status color toggles, and active diff selection tracking.
+- Added a native IDE file tree with active diff selection tracking.
+- Added an option to ignore line-ending-only differences when filtering unchanged files.
+- Added selection-driven file opening that keeps focus in the native file tree.

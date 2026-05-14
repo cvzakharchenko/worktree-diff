@@ -39,7 +39,7 @@ class DiffOpener(
         onSelectedEntryChanged(entries[selectedIndex].relativePath)
         FileEditorManager.getInstance(project).openFile(
             TrackingChainDiffVirtualFile(chain, entries, onSelectedEntryChanged),
-            true,
+            false,
         )
     }
 

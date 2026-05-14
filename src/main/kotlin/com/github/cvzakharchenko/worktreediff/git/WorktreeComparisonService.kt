@@ -1,6 +1,7 @@
 package com.github.cvzakharchenko.worktreediff.git
 
 import java.io.BufferedInputStream
+import java.io.PushbackInputStream
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.isDirectory
@@ -15,6 +16,7 @@ class WorktreeComparisonService(
         currentRoot: Path,
         selectedWorktree: WorktreeInfo,
         includeLocalChanges: Boolean,
+        ignoreLineEndings: Boolean = false,
     ): ComparisonResult {
         val selectedRoot = selectedWorktree.path
         val headPaths = headDiffPaths(currentRoot, selectedRoot)
@@ -28,7 +30,10 @@ class WorktreeComparisonService(
 
         val entries = candidates
             .asSequence()
-            .filter { includeLocalChanges || !filesEqual(resolveGitPath(currentRoot, it), resolveGitPath(selectedRoot, it)) }
+            .filter {
+                includeLocalChanges ||
+                    !filesEqual(resolveGitPath(currentRoot, it), resolveGitPath(selectedRoot, it), ignoreLineEndings)
+            }
             .map {
                 val leftPath = resolveGitPath(currentRoot, it)
                 val rightPath = resolveGitPath(selectedRoot, it)
@@ -107,7 +112,7 @@ class WorktreeComparisonService(
         return absolute
     }
 
-    internal fun filesEqual(left: Path, right: Path): Boolean {
+    internal fun filesEqual(left: Path, right: Path, ignoreLineEndings: Boolean = false): Boolean {
         val leftExists = left.existsOnDisk()
         val rightExists = right.existsOnDisk()
         if (leftExists != rightExists) {
@@ -125,10 +130,17 @@ class WorktreeComparisonService(
         if (!left.isRegularFile() || !right.isRegularFile()) {
             return false
         }
+        if (ignoreLineEndings) {
+            return filesEqualIgnoringLineEndings(left, right)
+        }
         if (Files.size(left) != Files.size(right)) {
             return false
         }
 
+        return binaryFilesEqual(left, right)
+    }
+
+    private fun binaryFilesEqual(left: Path, right: Path): Boolean {
         BufferedInputStream(Files.newInputStream(left)).use { leftInput ->
             BufferedInputStream(Files.newInputStream(right)).use { rightInput ->
                 while (true) {
@@ -143,6 +155,36 @@ class WorktreeComparisonService(
                 }
             }
         }
+    }
+
+    private fun filesEqualIgnoringLineEndings(left: Path, right: Path): Boolean {
+        PushbackInputStream(BufferedInputStream(Files.newInputStream(left)), 1).use { leftInput ->
+            PushbackInputStream(BufferedInputStream(Files.newInputStream(right)), 1).use { rightInput ->
+                while (true) {
+                    val leftByte = readTextByte(leftInput)
+                    val rightByte = readTextByte(rightInput)
+                    if (leftByte != rightByte) {
+                        return false
+                    }
+                    if (leftByte == -1) {
+                        return true
+                    }
+                }
+            }
+        }
+    }
+
+    private fun readTextByte(input: PushbackInputStream): Int {
+        val byte = input.read()
+        if (byte != '\r'.code) {
+            return byte
+        }
+
+        val next = input.read()
+        if (next != -1 && next != '\n'.code) {
+            input.unread(next)
+        }
+        return '\n'.code
     }
 
     private fun normalizeGitPath(path: String): String =

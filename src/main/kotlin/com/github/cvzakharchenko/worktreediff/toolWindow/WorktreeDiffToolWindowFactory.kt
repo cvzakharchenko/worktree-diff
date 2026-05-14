@@ -46,11 +46,12 @@ private class WorktreeDiffPanel(
     private val worktreeModel = DefaultComboBoxModel<WorktreeInfo>()
     private val worktreeComboBox = ComboBox(worktreeModel)
     private val includeLocalChanges = JCheckBox("Include local changes")
+    private val ignoreLineEndings = JCheckBox("Ignore line endings")
     private val refreshButton = JButton(AllIcons.Actions.Refresh).apply {
         toolTipText = "Refresh"
     }
     private val statusLabel = JBLabel()
-    private val fileTree = ComparisonTreePanel(::openSelectedDiff)
+    private val fileTree = ComparisonTreePanel(project, ::openSelectedDiff)
 
     private var repositoryRoot: Path? = null
     private var suppressSelectionEvents = false
@@ -72,6 +73,9 @@ private class WorktreeDiffPanel(
         includeLocalChanges.addActionListener {
             refreshSelectedComparison()
         }
+        ignoreLineEndings.addActionListener {
+            refreshSelectedComparison()
+        }
         refreshButton.addActionListener {
             refreshWorktreesAndComparison()
         }
@@ -84,8 +88,9 @@ private class WorktreeDiffPanel(
         top.add(worktreeComboBox, BorderLayout.CENTER)
         top.add(refreshButton, BorderLayout.EAST)
 
-        val options = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0))
+        val options = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0))
         options.add(includeLocalChanges)
+        options.add(ignoreLineEndings)
 
         return JPanel(BorderLayout(0, JBUI.scale(6))).apply {
             add(top, BorderLayout.NORTH)
@@ -96,6 +101,7 @@ private class WorktreeDiffPanel(
     private fun refreshWorktreesAndComparison() {
         val selectedPath = selectedWorktree()?.path
         val includeLocal = includeLocalChanges.isSelected
+        val ignoreEol = ignoreLineEndings.isSelected
         val generation = nextGeneration()
         setBusy("Refreshing worktrees...")
 
@@ -109,7 +115,7 @@ private class WorktreeDiffPanel(
                 val worktrees = worktreeService.listOtherWorktrees(root)
                 val selected = worktrees.firstOrNull { it.path == selectedPath } ?: worktrees.firstOrNull()
                 val comparison = selected?.let {
-                    comparisonService.compare(root, it, includeLocal)
+                    comparisonService.compare(root, it, includeLocal, ignoreEol)
                 } ?: ComparisonResult(emptyList())
 
                 RefreshState(
@@ -136,12 +142,13 @@ private class WorktreeDiffPanel(
         val root = repositoryRoot ?: return refreshWorktreesAndComparison()
         val selected = selectedWorktree() ?: return clearFiles("No other worktrees found.")
         val includeLocal = includeLocalChanges.isSelected
+        val ignoreEol = ignoreLineEndings.isSelected
         val generation = nextGeneration()
         setBusy("Refreshing comparison...")
 
         ApplicationManager.getApplication().executeOnPooledThread {
             val result = runCatching {
-                val comparison = comparisonService.compare(root, selected, includeLocal)
+                val comparison = comparisonService.compare(root, selected, includeLocal, ignoreEol)
                 RefreshState(
                     repositoryRoot = root,
                     worktrees = currentWorktrees(),
@@ -217,6 +224,7 @@ private class WorktreeDiffPanel(
         refreshButton.isEnabled = enabled
         worktreeComboBox.isEnabled = enabled && worktreeModel.size > 0
         includeLocalChanges.isEnabled = enabled && worktreeModel.size > 0
+        ignoreLineEndings.isEnabled = enabled && worktreeModel.size > 0
         fileTree.setEnabled(enabled)
     }
 

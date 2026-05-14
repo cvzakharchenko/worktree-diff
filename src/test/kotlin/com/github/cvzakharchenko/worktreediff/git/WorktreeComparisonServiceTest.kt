@@ -79,6 +79,36 @@ class WorktreeComparisonServiceTest {
         assertEquals(listOf("same.txt"), toggleOn.entries.map { it.relativePath })
     }
 
+    @Test
+    fun `line ending only differences are included by binary comparison`() = withRepository { main, other ->
+        main.resolve("tracked.txt").writeText("one\r\ntwo\r\n")
+        other.resolve("tracked.txt").writeText("one\ntwo\n")
+
+        val comparison = compare(main, other, includeLocalChanges = false, ignoreLineEndings = false)
+
+        assertEquals(listOf("tracked.txt"), comparison.entries.map { it.relativePath })
+    }
+
+    @Test
+    fun `line ending only differences are hidden by text comparison`() = withRepository { main, other ->
+        main.resolve("tracked.txt").writeText("one\r\ntwo\r\n")
+        other.resolve("tracked.txt").writeText("one\ntwo\n")
+
+        val comparison = compare(main, other, includeLocalChanges = false, ignoreLineEndings = true)
+
+        assertTrue(comparison.entries.isEmpty())
+    }
+
+    @Test
+    fun `content differences are still included by text comparison`() = withRepository { main, other ->
+        main.resolve("tracked.txt").writeText("one\r\ntwo\r\n")
+        other.resolve("tracked.txt").writeText("one\nthree\n")
+
+        val comparison = compare(main, other, includeLocalChanges = false, ignoreLineEndings = true)
+
+        assertEquals(listOf("tracked.txt"), comparison.entries.map { it.relativePath })
+    }
+
     private fun withRepository(testBody: (Path, Path) -> Unit) {
         val root = Files.createTempDirectory("worktree-diff-test-")
         tempRoots.add(root)
@@ -100,10 +130,15 @@ class WorktreeComparisonServiceTest {
         testBody(main, other)
     }
 
-    private fun compare(main: Path, other: Path, includeLocalChanges: Boolean): ComparisonResult {
+    private fun compare(
+        main: Path,
+        other: Path,
+        includeLocalChanges: Boolean,
+        ignoreLineEndings: Boolean = false,
+    ): ComparisonResult {
         val service = WorktreeService()
         val selected = service.listOtherWorktrees(main).single { it.path == other.toRealPath() }
-        return WorktreeComparisonService().compare(main, selected, includeLocalChanges)
+        return WorktreeComparisonService().compare(main, selected, includeLocalChanges, ignoreLineEndings)
     }
 
     private fun git(workingDirectory: Path, vararg arguments: String): String {
