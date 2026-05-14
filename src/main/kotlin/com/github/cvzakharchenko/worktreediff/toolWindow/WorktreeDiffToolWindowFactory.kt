@@ -66,7 +66,7 @@ private class WorktreeDiffPanel(
     private var includeLocalChanges = settings.includeLocalChanges
     private var ignoreLineEndings = settings.ignoreLineEndings
     private var refreshEnabled = false
-    private var optionsEnabled = false
+    private var optionsAvailable = false
     private var repositoryRoot: Path? = null
     private var refreshGeneration = 0
     private var suppressSelectionEvents = false
@@ -74,7 +74,7 @@ private class WorktreeDiffPanel(
     private val includeLocalChangesAction = BooleanOptionAction(
         text = "Include Local Changes",
         description = "Include files changed locally on either side even when their disk content matches.",
-        isEnabled = { optionsEnabled },
+        isEnabled = { optionsAvailable },
         isSelected = { includeLocalChanges },
         setSelected = {
             includeLocalChanges = it
@@ -85,7 +85,7 @@ private class WorktreeDiffPanel(
     private val ignoreLineEndingsAction = BooleanOptionAction(
         text = "Ignore Line Endings",
         description = "Ignore CRLF, CR, and LF differences when filtering unchanged files.",
-        isEnabled = { optionsEnabled },
+        isEnabled = { optionsAvailable },
         isSelected = { ignoreLineEndings },
         setSelected = {
             ignoreLineEndings = it
@@ -273,8 +273,8 @@ private class WorktreeDiffPanel(
 
     private fun setControlsEnabled(enabled: Boolean) {
         refreshEnabled = enabled
-        optionsEnabled = enabled && worktreeModel.size > 0
-        worktreeComboBox.isEnabled = optionsEnabled
+        optionsAvailable = worktreeModel.size > 0
+        worktreeComboBox.isEnabled = enabled && optionsAvailable
         fileTree.setEnabled(enabled)
         refreshToolbar.updateActionsAsync()
     }
