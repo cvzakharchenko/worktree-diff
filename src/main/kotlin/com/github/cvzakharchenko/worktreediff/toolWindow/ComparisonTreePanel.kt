@@ -36,6 +36,8 @@ internal class ComparisonTreePanel(
         override fun rebuildTree() {
             rebuildTreeModel()
         }
+
+        override fun shouldShowBusyIconIfNeeded(): Boolean = true
     }
     private val filePathFactory = VcsContextFactory.getInstance()
 
@@ -63,6 +65,10 @@ internal class ComparisonTreePanel(
 
     fun setEmptyText(message: String) {
         tree.emptyText.text = message
+    }
+
+    fun setPaintBusy(busy: Boolean) {
+        tree.setPaintBusy(busy)
     }
 
     fun setEntries(newEntries: List<FileComparison>) {
