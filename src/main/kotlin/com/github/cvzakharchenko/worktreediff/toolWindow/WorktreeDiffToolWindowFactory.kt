@@ -2,7 +2,6 @@ package com.github.cvzakharchenko.worktreediff.toolWindow
 
 import com.github.cvzakharchenko.worktreediff.diff.DiffOpener
 import com.github.cvzakharchenko.worktreediff.git.ComparisonResult
-import com.github.cvzakharchenko.worktreediff.git.FileComparison
 import com.github.cvzakharchenko.worktreediff.git.GitCommandException
 import com.github.cvzakharchenko.worktreediff.git.WorktreeComparisonService
 import com.github.cvzakharchenko.worktreediff.git.WorktreeInfo
@@ -14,25 +13,17 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
-import com.intellij.ui.ScrollPaneFactory
 import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBList
 import com.intellij.ui.content.ContentFactory
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.FlowLayout
-import java.awt.event.KeyEvent
-import java.awt.event.MouseAdapter
-import java.awt.event.MouseEvent
 import java.nio.file.Path
 import javax.swing.DefaultComboBoxModel
-import javax.swing.DefaultListModel
 import javax.swing.JButton
 import javax.swing.JCheckBox
 import javax.swing.JComponent
 import javax.swing.JPanel
-import javax.swing.KeyStroke
-import javax.swing.ListSelectionModel
 import javax.swing.SwingUtilities
 
 class WorktreeDiffToolWindowFactory : ToolWindowFactory, DumbAware {
@@ -59,8 +50,7 @@ private class WorktreeDiffPanel(
         toolTipText = "Refresh"
     }
     private val statusLabel = JBLabel()
-    private val fileListModel = DefaultListModel<FileComparison>()
-    private val fileList = JBList(fileListModel)
+    private val fileTree = ComparisonTreePanel(::openSelectedDiff)
 
     private var repositoryRoot: Path? = null
     private var suppressSelectionEvents = false
@@ -69,12 +59,11 @@ private class WorktreeDiffPanel(
     val component: JComponent = JPanel(BorderLayout()).apply {
         border = JBUI.Borders.empty(8)
         add(createControls(), BorderLayout.NORTH)
-        add(ScrollPaneFactory.createScrollPane(fileList), BorderLayout.CENTER)
+        add(fileTree.component, BorderLayout.CENTER)
         add(statusLabel, BorderLayout.SOUTH)
     }
 
     init {
-        configureList()
         worktreeComboBox.addActionListener {
             if (!suppressSelectionEvents) {
                 refreshSelectedComparison()
@@ -102,24 +91,6 @@ private class WorktreeDiffPanel(
             add(top, BorderLayout.NORTH)
             add(options, BorderLayout.SOUTH)
         }
-    }
-
-    private fun configureList() {
-        fileList.selectionMode = ListSelectionModel.SINGLE_SELECTION
-        fileList.emptyText.text = "No differences"
-        fileList.addMouseListener(object : MouseAdapter() {
-            override fun mouseClicked(event: MouseEvent) {
-                if (SwingUtilities.isLeftMouseButton(event) && event.clickCount == 1) {
-                    openSelectedDiff()
-                }
-            }
-        })
-        fileList.inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "openDiff")
-        fileList.actionMap.put("openDiff", object : javax.swing.AbstractAction() {
-            override fun actionPerformed(event: java.awt.event.ActionEvent) {
-                openSelectedDiff()
-            }
-        })
     }
 
     private fun refreshWorktreesAndComparison() {
@@ -205,9 +176,7 @@ private class WorktreeDiffPanel(
             repositoryRoot = state.repositoryRoot
             updateWorktreeModel(state.worktrees, state.selected)
 
-            val entries = state.comparison?.entries.orEmpty()
-            fileListModel.clear()
-            entries.forEach(fileListModel::addElement)
+            fileTree.setEntries(state.comparison?.entries.orEmpty())
         }
 
         val message = state.error ?: state.message.orEmpty()
@@ -235,7 +204,7 @@ private class WorktreeDiffPanel(
         (0 until worktreeModel.size).map { worktreeModel.getElementAt(it) }
 
     private fun clearFiles(message: String) {
-        fileListModel.clear()
+        fileTree.clear()
         statusLabel.text = message
     }
 
@@ -248,7 +217,7 @@ private class WorktreeDiffPanel(
         refreshButton.isEnabled = enabled
         worktreeComboBox.isEnabled = enabled && worktreeModel.size > 0
         includeLocalChanges.isEnabled = enabled && worktreeModel.size > 0
-        fileList.isEnabled = enabled
+        fileTree.setEnabled(enabled)
     }
 
     private fun nextGeneration(): Int {
@@ -257,12 +226,16 @@ private class WorktreeDiffPanel(
     }
 
     private fun openSelectedDiff() {
-        val index = fileList.selectedIndex
-        if (index !in 0 until fileListModel.size) {
+        val index = fileTree.selectedVisibleIndex()
+        val entries = fileTree.visibleEntries()
+        if (index !in entries.indices) {
             return
         }
-        val entries = (0 until fileListModel.size).map { fileListModel.getElementAt(it) }
-        diffOpener.open(entries, index)
+        diffOpener.open(entries, index) { relativePath ->
+            SwingUtilities.invokeLater {
+                fileTree.selectEntry(relativePath)
+            }
+        }
     }
 }
 

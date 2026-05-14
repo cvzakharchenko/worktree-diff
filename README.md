@@ -9,7 +9,9 @@ The plugin adds a **Worktree Diff** tool window with:
 - a refresh action;
 - a toggle to include all uncommitted changes from either side;
 - a Git-aware list of changed, modified, and untracked non-ignored files;
+- a filterable file tree with icons, folder grouping, optional full-path display, and optional status colors;
 - built-in IntelliJ diff views backed by the files on disk.
+- side-panel selection that follows the active file while navigating a Worktree Diff diff chain.
 
 The first implementation targets IntelliJ IDEA 2026.1+ and intentionally supports a single repository per IDE project.
 
