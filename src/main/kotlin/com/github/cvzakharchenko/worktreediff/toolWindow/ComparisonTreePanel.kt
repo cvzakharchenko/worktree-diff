@@ -61,6 +61,10 @@ internal class ComparisonTreePanel(
         }
     }
 
+    fun setEmptyText(message: String) {
+        tree.emptyText.text = message
+    }
+
     fun setEntries(newEntries: List<FileComparison>) {
         entries = newEntries
         filePathsByRelativePath = entries.associate { entry ->

@@ -6,25 +6,30 @@ import com.github.cvzakharchenko.worktreediff.git.GitCommandException
 import com.github.cvzakharchenko.worktreediff.git.WorktreeComparisonService
 import com.github.cvzakharchenko.worktreediff.git.WorktreeInfo
 import com.github.cvzakharchenko.worktreediff.git.WorktreeService
+import com.github.cvzakharchenko.worktreediff.settings.WorktreeDiffSettings
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.ActionToolbar
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.components.service
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.DumbAware
+import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.DumbAwareToggleAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
+import com.intellij.openapi.ui.SimpleToolWindowPanel
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
-import com.intellij.ui.components.JBLabel
 import com.intellij.ui.content.ContentFactory
-import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
+import java.awt.Dimension
 import java.nio.file.Path
-import javax.swing.Icon
 import javax.swing.DefaultComboBoxModel
-import javax.swing.JButton
+import javax.swing.Icon
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.SwingUtilities
@@ -47,17 +52,20 @@ private class WorktreeDiffPanel(
     private val comparisonService: WorktreeComparisonService = WorktreeComparisonService(),
     private val diffOpener: DiffOpener = DiffOpener(project),
 ) {
-    private val worktreeModel = DefaultComboBoxModel<WorktreeInfo>()
-    private val worktreeComboBox = ComboBox(worktreeModel)
-    private val refreshButton = JButton(AllIcons.Actions.Refresh).apply {
-        toolTipText = "Refresh"
-    }
-    private val statusLabel = JBLabel()
     private val fileTree = ComparisonTreePanel(project, ::openSelectedDiff)
+    private val worktreeModel = DefaultComboBoxModel<WorktreeInfo>()
+    private val worktreeComboBox = ComboBox(worktreeModel).apply {
+        toolTipText = "Select worktree to compare"
+    }
+    private val settings = project.service<WorktreeDiffSettings>()
 
-    private var includeLocalChanges = false
-    private var ignoreLineEndings = false
+    private var includeLocalChanges = settings.includeLocalChanges
+    private var ignoreLineEndings = settings.ignoreLineEndings
+    private var refreshEnabled = false
     private var optionsEnabled = false
+    private var repositoryRoot: Path? = null
+    private var refreshGeneration = 0
+    private var suppressSelectionEvents = false
 
     private val includeLocalChangesAction = BooleanOptionAction(
         text = "Include Local Changes",
@@ -66,6 +74,7 @@ private class WorktreeDiffPanel(
         isSelected = { includeLocalChanges },
         setSelected = {
             includeLocalChanges = it
+            settings.includeLocalChanges = it
             refreshSelectedComparison()
         },
     )
@@ -76,6 +85,7 @@ private class WorktreeDiffPanel(
         isSelected = { ignoreLineEndings },
         setSelected = {
             ignoreLineEndings = it
+            settings.ignoreLineEndings = it
             refreshSelectedComparison()
         },
     )
@@ -84,16 +94,26 @@ private class WorktreeDiffPanel(
         add(includeLocalChangesAction)
         add(ignoreLineEndingsAction)
     }
+    private val refreshAction = object : DumbAwareAction(
+        "Refresh",
+        "Refresh worktrees and comparison",
+        AllIcons.Actions.Refresh,
+    ) {
+        override fun update(event: AnActionEvent) {
+            event.presentation.isEnabled = refreshEnabled
+        }
 
-    private var repositoryRoot: Path? = null
-    private var suppressSelectionEvents = false
-    private var refreshGeneration = 0
+        override fun actionPerformed(event: AnActionEvent) {
+            FileDocumentManager.getInstance().saveAllDocuments()
+            refreshWorktreesAndComparison()
+        }
+    }
+    private val refreshToolbar = createRefreshToolbar()
 
-    val component: JComponent = JPanel(BorderLayout()).apply {
-        border = JBUI.Borders.empty(8)
-        add(createControls(), BorderLayout.NORTH)
-        add(fileTree.component, BorderLayout.CENTER)
-        add(statusLabel, BorderLayout.SOUTH)
+    val component: JComponent = SimpleToolWindowPanel(true, true).apply {
+        refreshToolbar.targetComponent = this
+        setToolbar(createControlsToolbar())
+        setContent(fileTree.component)
     }
 
     init {
@@ -102,19 +122,7 @@ private class WorktreeDiffPanel(
                 refreshSelectedComparison()
             }
         }
-        refreshButton.addActionListener {
-            refreshWorktreesAndComparison()
-        }
-
         refreshWorktreesAndComparison()
-    }
-
-    private fun createControls(): JComponent {
-        val top = JPanel(BorderLayout(JBUI.scale(6), JBUI.scale(4)))
-        top.add(worktreeComboBox, BorderLayout.CENTER)
-        top.add(refreshButton, BorderLayout.EAST)
-
-        return top
     }
 
     fun titleActions(): List<AnAction> =
@@ -132,7 +140,7 @@ private class WorktreeDiffPanel(
                 val root = project.basePath
                     ?.let { Path.of(it) }
                     ?.let { worktreeService.findRepositoryRoot(it) }
-                    ?: return@runCatching RefreshState(message = "Project is not inside a Git repository.")
+                    ?: return@runCatching RefreshState(emptyText = "Project is not inside a Git repository.")
 
                 val worktrees = worktreeService.listOtherWorktrees(root)
                 val selected = worktrees.firstOrNull { it.path == selectedPath } ?: worktrees.firstOrNull()
@@ -145,11 +153,7 @@ private class WorktreeDiffPanel(
                     worktrees = worktrees,
                     selected = selected,
                     comparison = comparison,
-                    message = when {
-                        worktrees.isEmpty() -> "No other worktrees found."
-                        comparison.entries.isEmpty() -> "No differences."
-                        else -> "${comparison.entries.size} file(s)."
-                    },
+                    emptyText = if (worktrees.isEmpty()) "No other worktrees found." else "No differences",
                 )
             }.fold(
                 onSuccess = { it },
@@ -176,11 +180,7 @@ private class WorktreeDiffPanel(
                     worktrees = currentWorktrees(),
                     selected = selected,
                     comparison = comparison,
-                    message = if (comparison.entries.isEmpty()) {
-                        "No differences."
-                    } else {
-                        "${comparison.entries.size} file(s)."
-                    },
+                    emptyText = "No differences",
                 )
             }.fold(
                 onSuccess = { it },
@@ -204,12 +204,12 @@ private class WorktreeDiffPanel(
         if (state.error == null) {
             repositoryRoot = state.repositoryRoot
             updateWorktreeModel(state.worktrees, state.selected)
-
+            fileTree.setEmptyText(state.emptyText)
             fileTree.setEntries(state.comparison?.entries.orEmpty())
+        } else {
+            clearFiles(state.error)
         }
 
-        val message = state.error ?: state.message.orEmpty()
-        statusLabel.text = message
         setControlsEnabled(enabled = true)
     }
 
@@ -224,6 +224,7 @@ private class WorktreeDiffPanel(
         } finally {
             suppressSelectionEvents = false
         }
+        worktreeComboBox.toolTipText = selected?.path?.toString() ?: "No worktrees"
     }
 
     private fun selectedWorktree(): WorktreeInfo? =
@@ -234,19 +235,20 @@ private class WorktreeDiffPanel(
 
     private fun clearFiles(message: String) {
         fileTree.clear()
-        statusLabel.text = message
+        fileTree.setEmptyText(message)
     }
 
     private fun setBusy(message: String) {
-        statusLabel.text = message
+        fileTree.setEmptyText(message)
         setControlsEnabled(false)
     }
 
     private fun setControlsEnabled(enabled: Boolean) {
-        refreshButton.isEnabled = enabled
-        worktreeComboBox.isEnabled = enabled && worktreeModel.size > 0
+        refreshEnabled = enabled
         optionsEnabled = enabled && worktreeModel.size > 0
+        worktreeComboBox.isEnabled = optionsEnabled
         fileTree.setEnabled(enabled)
+        refreshToolbar.updateActionsAsync()
     }
 
     private fun nextGeneration(): Int {
@@ -266,6 +268,24 @@ private class WorktreeDiffPanel(
             }
         }
     }
+
+    private fun createRefreshToolbar(): ActionToolbar {
+        val actionGroup = DefaultActionGroup().apply {
+            add(refreshAction)
+        }
+        return ActionManager.getInstance()
+            .createActionToolbar("WorktreeDiff.Controls", actionGroup, true)
+            .apply {
+                setReservePlaceAutoPopupIcon(false)
+            }
+    }
+
+    private fun createControlsToolbar(): JComponent =
+        JPanel(BorderLayout()).apply {
+            worktreeComboBox.minimumSize = Dimension(0, worktreeComboBox.preferredSize.height)
+            add(worktreeComboBox, BorderLayout.CENTER)
+            add(refreshToolbar.component, BorderLayout.EAST)
+        }
 }
 
 private class BooleanOptionAction(
@@ -294,7 +314,7 @@ private data class RefreshState(
     val worktrees: List<WorktreeInfo> = emptyList(),
     val selected: WorktreeInfo? = null,
     val comparison: ComparisonResult? = null,
-    val message: String? = null,
+    val emptyText: String = "No differences",
     val error: String? = null,
 )
 
