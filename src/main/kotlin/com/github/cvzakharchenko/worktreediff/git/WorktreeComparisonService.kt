@@ -1,9 +1,14 @@
 package com.github.cvzakharchenko.worktreediff.git
 
+import com.github.cvzakharchenko.worktreediff.telemetry.RefreshTelemetry
+import com.github.cvzakharchenko.worktreediff.telemetry.measure
+import com.github.cvzakharchenko.worktreediff.telemetry.metric
 import java.io.BufferedInputStream
 import java.io.PushbackInputStream
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CompletionException
 import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
 
@@ -17,60 +22,94 @@ class WorktreeComparisonService(
         selectedWorktree: WorktreeInfo,
         includeLocalChanges: Boolean,
         ignoreLineEndings: Boolean = false,
+        telemetry: RefreshTelemetry? = null,
     ): ComparisonResult {
         val selectedRoot = selectedWorktree.path
-        val headPaths = headDiffPaths(currentRoot, selectedRoot)
-        val leftLocalChanges = localChangePaths(currentRoot)
-        val rightLocalChanges = localChangePaths(selectedRoot)
+        val currentHeadFuture = asyncMeasured("leftHead", telemetry) {
+            worktreeService.currentHead(currentRoot)
+        }
+        val selectedHeadFuture = asyncMeasured("rightHead", telemetry) {
+            worktreeService.currentHead(selectedRoot)
+        }
+        val leftLocalChangesFuture = asyncMeasured("leftStatus", telemetry) {
+            localChangePaths(currentRoot)
+        }
+        val rightLocalChangesFuture = asyncMeasured("rightStatus", telemetry) {
+            localChangePaths(selectedRoot)
+        }
 
-        val candidates = sortedSetOf<String>()
-        candidates += headPaths
-        candidates += leftLocalChanges
-        candidates += rightLocalChanges
+        val headPaths = headDiffPaths(
+            currentRoot = currentRoot,
+            currentHead = currentHeadFuture.await(),
+            selectedHead = selectedHeadFuture.await(),
+            telemetry = telemetry,
+        )
+        val leftLocalChanges = leftLocalChangesFuture.await()
+        val rightLocalChanges = rightLocalChangesFuture.await()
 
-        val entries = candidates
-            .asSequence()
-            .filter {
-                includeLocalChanges ||
-                    !filesEqual(resolveGitPath(currentRoot, it), resolveGitPath(selectedRoot, it), ignoreLineEndings)
+        val candidates = telemetry.measure("buildCandidates") {
+            sortedSetOf<String>().apply {
+                addAll(headPaths)
+                addAll(leftLocalChanges)
+                addAll(rightLocalChanges)
             }
-            .map {
-                val leftPath = resolveGitPath(currentRoot, it)
-                val rightPath = resolveGitPath(selectedRoot, it)
-                FileComparison(
-                    relativePath = it,
-                    leftPath = leftPath,
-                    rightPath = rightPath,
-                    leftExists = leftPath.existsOnDisk(),
-                    rightExists = rightPath.existsOnDisk(),
-                    headChanged = it in headPaths,
-                    leftLocallyChanged = it in leftLocalChanges,
-                    rightLocallyChanged = it in rightLocalChanges,
-                )
-            }
-            .toList()
+        }
+        telemetry.metric("headPaths", headPaths.size)
+        telemetry.metric("leftLocalChanges", leftLocalChanges.size)
+        telemetry.metric("rightLocalChanges", rightLocalChanges.size)
+        telemetry.metric("candidates", candidates.size)
+
+        val entries = telemetry.measure("filterAndBuildEntries") {
+            candidates
+                .asSequence()
+                .filter {
+                    includeLocalChanges ||
+                        !filesEqual(resolveGitPath(currentRoot, it), resolveGitPath(selectedRoot, it), ignoreLineEndings)
+                }
+                .map {
+                    val leftPath = resolveGitPath(currentRoot, it)
+                    val rightPath = resolveGitPath(selectedRoot, it)
+                    FileComparison(
+                        relativePath = it,
+                        leftPath = leftPath,
+                        rightPath = rightPath,
+                        leftExists = leftPath.existsOnDisk(),
+                        rightExists = rightPath.existsOnDisk(),
+                        headChanged = it in headPaths,
+                        leftLocallyChanged = it in leftLocalChanges,
+                        rightLocallyChanged = it in rightLocalChanges,
+                    )
+                }
+                .toList()
+        }
+        telemetry.metric("entries", entries.size)
 
         return ComparisonResult(entries)
     }
 
-    private fun headDiffPaths(currentRoot: Path, selectedRoot: Path): Set<String> {
-        val currentHead = worktreeService.currentHead(currentRoot)
-        val selectedHead = worktreeService.currentHead(selectedRoot)
+    private fun headDiffPaths(
+        currentRoot: Path,
+        currentHead: String?,
+        selectedHead: String?,
+        telemetry: RefreshTelemetry?,
+    ): Set<String> {
         if (currentHead == null || selectedHead == null) {
             return emptySet()
         }
 
-        return parsePathList(
-            git.runBytes(
-                currentRoot,
-                "diff",
-                "--name-only",
-                "-z",
-                "--no-renames",
-                currentHead,
-                selectedHead,
-            ),
-        )
+        return telemetry.measure("headDiff") {
+            parsePathList(
+                git.runBytes(
+                    currentRoot,
+                    "diff",
+                    "--name-only",
+                    "-z",
+                    "--no-renames",
+                    currentHead,
+                    selectedHead,
+                ),
+            )
+        }
     }
 
     private fun localChangePaths(root: Path): Set<String> =
@@ -190,3 +229,19 @@ class WorktreeComparisonService(
     private fun normalizeGitPath(path: String): String =
         path.trimEnd('/').replace('\\', '/')
 }
+
+private fun <T> asyncMeasured(
+    name: String,
+    telemetry: RefreshTelemetry?,
+    action: () -> T,
+): CompletableFuture<T> =
+    CompletableFuture.supplyAsync {
+        telemetry.measure(name, action)
+    }
+
+private fun <T> CompletableFuture<T>.await(): T =
+    try {
+        join()
+    } catch (e: CompletionException) {
+        throw e.cause ?: e
+    }

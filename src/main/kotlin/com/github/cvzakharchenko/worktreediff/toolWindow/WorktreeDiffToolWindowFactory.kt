@@ -7,6 +7,7 @@ import com.github.cvzakharchenko.worktreediff.git.WorktreeComparisonService
 import com.github.cvzakharchenko.worktreediff.git.WorktreeInfo
 import com.github.cvzakharchenko.worktreediff.git.WorktreeService
 import com.github.cvzakharchenko.worktreediff.settings.WorktreeDiffSettings
+import com.github.cvzakharchenko.worktreediff.telemetry.RefreshTelemetry
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionToolbar
@@ -15,6 +16,7 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.DumbAwareAction
@@ -33,6 +35,8 @@ import javax.swing.Icon
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.SwingUtilities
+
+private val LOG = Logger.getInstance(WorktreeDiffToolWindowFactory::class.java)
 
 class WorktreeDiffToolWindowFactory : ToolWindowFactory, DumbAware {
 
@@ -104,8 +108,11 @@ private class WorktreeDiffPanel(
         }
 
         override fun actionPerformed(event: AnActionEvent) {
-            FileDocumentManager.getInstance().saveAllDocuments()
-            refreshWorktreesAndComparison()
+            val telemetry = RefreshTelemetry("refreshButton")
+            telemetry.measure("saveAllDocuments") {
+                FileDocumentManager.getInstance().saveAllDocuments()
+            }
+            refreshWorktreesAndComparison(telemetry)
         }
     }
     private val refreshToolbar = createRefreshToolbar()
@@ -128,24 +135,37 @@ private class WorktreeDiffPanel(
     fun titleActions(): List<AnAction> =
         listOf(optionsAction) + fileTree.titleActions()
 
-    private fun refreshWorktreesAndComparison() {
+    private fun refreshWorktreesAndComparison(
+        telemetry: RefreshTelemetry = RefreshTelemetry("refreshWorktrees"),
+    ) {
         val selectedPath = selectedWorktree()?.path
         val includeLocal = includeLocalChanges
         val ignoreEol = ignoreLineEndings
         val generation = nextGeneration()
+        telemetry.metric("includeLocalChanges", includeLocal)
+        telemetry.metric("ignoreLineEndings", ignoreEol)
         setBusy("Refreshing worktrees...")
 
         ApplicationManager.getApplication().executeOnPooledThread {
             val result = runCatching {
-                val root = project.basePath
-                    ?.let { Path.of(it) }
-                    ?.let { worktreeService.findRepositoryRoot(it) }
+                val root = telemetry.measure("findRepositoryRoot") {
+                    project.basePath
+                        ?.let { Path.of(it) }
+                        ?.let { worktreeService.findRepositoryRoot(it) }
+                }
                     ?: return@runCatching RefreshState(emptyText = "Project is not inside a Git repository.")
 
-                val worktrees = worktreeService.listOtherWorktrees(root)
-                val selected = worktrees.firstOrNull { it.path == selectedPath } ?: worktrees.firstOrNull()
+                val worktrees = telemetry.measure("listWorktrees") {
+                    worktreeService.listOtherWorktrees(root)
+                }
+                telemetry.metric("worktrees", worktrees.size)
+                val selected = telemetry.measure("selectWorktree") {
+                    worktrees.firstOrNull { it.path == selectedPath } ?: worktrees.firstOrNull()
+                }
                 val comparison = selected?.let {
-                    comparisonService.compare(root, it, includeLocal, ignoreEol)
+                    telemetry.measure("compareTotal") {
+                        comparisonService.compare(root, it, includeLocal, ignoreEol, telemetry)
+                    }
                 } ?: ComparisonResult(emptyList())
 
                 RefreshState(
@@ -160,7 +180,7 @@ private class WorktreeDiffPanel(
                 onFailure = { RefreshState(error = it.userMessage()) },
             )
 
-            applyStateLater(generation, result)
+            applyStateLater(generation, result.copy(telemetry = telemetry))
         }
     }
 
@@ -170,11 +190,16 @@ private class WorktreeDiffPanel(
         val includeLocal = includeLocalChanges
         val ignoreEol = ignoreLineEndings
         val generation = nextGeneration()
+        val telemetry = RefreshTelemetry("refreshSelectedComparison")
+        telemetry.metric("includeLocalChanges", includeLocal)
+        telemetry.metric("ignoreLineEndings", ignoreEol)
         setBusy("Refreshing comparison...")
 
         ApplicationManager.getApplication().executeOnPooledThread {
             val result = runCatching {
-                val comparison = comparisonService.compare(root, selected, includeLocal, ignoreEol)
+                val comparison = telemetry.measure("compareTotal") {
+                    comparisonService.compare(root, selected, includeLocal, ignoreEol, telemetry)
+                }
                 RefreshState(
                     repositoryRoot = root,
                     worktrees = currentWorktrees(),
@@ -187,7 +212,7 @@ private class WorktreeDiffPanel(
                 onFailure = { RefreshState(error = it.userMessage()) },
             )
 
-            applyStateLater(generation, result)
+            applyStateLater(generation, result.copy(telemetry = telemetry))
         }
     }
 
@@ -201,16 +226,19 @@ private class WorktreeDiffPanel(
     }
 
     private fun applyState(state: RefreshState) {
-        if (state.error == null) {
-            repositoryRoot = state.repositoryRoot
-            updateWorktreeModel(state.worktrees, state.selected)
-            fileTree.setEmptyText(state.emptyText)
-            fileTree.setEntries(state.comparison?.entries.orEmpty())
-        } else {
-            clearFiles(state.error)
-        }
+        state.telemetry.measure("applyUi") {
+            if (state.error == null) {
+                repositoryRoot = state.repositoryRoot
+                updateWorktreeModel(state.worktrees, state.selected)
+                fileTree.setEmptyText(state.emptyText)
+                fileTree.setEntries(state.comparison?.entries.orEmpty())
+            } else {
+                clearFiles(state.error)
+            }
 
-        setControlsEnabled(enabled = true)
+            setControlsEnabled(enabled = true)
+        }
+        LOG.info(state.telemetry.summary(success = state.error == null))
     }
 
     private fun updateWorktreeModel(worktrees: List<WorktreeInfo>, selected: WorktreeInfo?) {
@@ -316,6 +344,7 @@ private data class RefreshState(
     val comparison: ComparisonResult? = null,
     val emptyText: String = "No differences",
     val error: String? = null,
+    val telemetry: RefreshTelemetry = RefreshTelemetry("refresh"),
 )
 
 private fun Throwable.userMessage(): String =
