@@ -4,4 +4,6 @@
 
 ## [Unreleased]
 ### Added
-- Initial scaffold created from [IntelliJ Platform Plugin Template](https://github.com/JetBrains/intellij-platform-plugin-template)
+- Added the Worktree Diff tool window for comparing the current checkout with another local Git worktree.
+- Added Git-aware comparison of head differences, tracked local changes, and untracked non-ignored files.
+- Added built-in IntelliJ diff opening for selected file comparisons.
