@@ -22,6 +22,7 @@ import com.intellij.ui.ScrollPaneFactory
 import java.awt.BorderLayout
 import java.nio.file.Path
 import javax.swing.JComponent
+import javax.swing.Icon
 import javax.swing.JPanel
 import javax.swing.tree.TreeSelectionModel
 
@@ -240,6 +241,9 @@ internal class ComparisonTreePanel(
     private inner class EntryEditAction(
         private val mode: EntryEditService.Mode,
     ) : DumbAwareAction(mode.actionText) {
+        init {
+            templatePresentation.icon = mode.popupIcon()
+        }
 
         override fun update(event: AnActionEvent) {
             event.presentation.isEnabled = tree.isEnabled && collectSelectedEntries().isNotEmpty()
@@ -259,3 +263,10 @@ private fun FilePath.normalizedAbsolutePath(): Path =
 
 private fun Path.normalizedAbsolutePath(): Path =
     toAbsolutePath().normalize()
+
+private fun EntryEditService.Mode.popupIcon(): Icon =
+    when (this) {
+        EntryEditService.Mode.ACCEPT_LEFT -> AllIcons.Actions.Forward
+        EntryEditService.Mode.ACCEPT_RIGHT -> AllIcons.Actions.Back
+        EntryEditService.Mode.SWAP -> AllIcons.Actions.SwapPanels
+    }
