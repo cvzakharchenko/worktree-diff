@@ -33,7 +33,6 @@ internal class ComparisonTreePanel(
     private var entries: List<FileComparison> = emptyList()
     private var filePathsByRelativePath: Map<String, FilePath> = emptyMap()
     private var entriesByAbsolutePath: Map<Path, FileComparison> = emptyMap()
-    private var selectedRelativePath: String? = null
     private var suppressSelectionOpen = false
 
     private val tree = object : ChangesListView(project, false) {
@@ -52,7 +51,6 @@ internal class ComparisonTreePanel(
         tree.selectionModel.selectionMode = TreeSelectionModel.DISCONTIGUOUS_TREE_SELECTION
         tree.addSelectionListener {
             singleSelectedEntry()?.let {
-                selectedRelativePath = it.relativePath
                 if (!suppressSelectionOpen) {
                     onOpenDiff()
                 }
@@ -77,10 +75,6 @@ internal class ComparisonTreePanel(
         }
         entriesByAbsolutePath = entries.associateBy { it.leftPath.normalizedAbsolutePath() }
 
-        if (selectedRelativePath !in filePathsByRelativePath.keys) {
-            selectedRelativePath = null
-        }
-
         rebuildTreeModel()
     }
 
@@ -92,11 +86,8 @@ internal class ComparisonTreePanel(
         entries = emptyList()
         filePathsByRelativePath = emptyMap()
         entriesByAbsolutePath = emptyMap()
-        selectedRelativePath = null
         rebuildTreeModel()
     }
-
-    fun selectedEntry(): FileComparison? = singleSelectedEntry()
 
     fun selectedVisibleIndex(): Int {
         val entry = singleSelectedEntry() ?: return -1
@@ -115,7 +106,6 @@ internal class ComparisonTreePanel(
     }
 
     fun selectEntry(relativePath: String) {
-        selectedRelativePath = relativePath
         filePathsByRelativePath[relativePath]?.let {
             withSelectionOpenSuppressed {
                 tree.selectFile(it)
@@ -124,18 +114,14 @@ internal class ComparisonTreePanel(
     }
 
     private fun rebuildTreeModel() {
-        val previousSelection = singleSelectedEntry()?.relativePath ?: selectedRelativePath
-        selectedRelativePath = previousSelection
-
         val model = TreeModelBuilder.buildFromFilePaths(
             project,
             tree.grouping,
             filePathsByRelativePath.values,
         )
         withSelectionOpenSuppressed {
-            tree.updateTreeModel(model, ChangesTree.KEEP_SELECTED_OBJECTS)
+            tree.updateTreeModel(model, ChangesTree.DO_NOTHING)
             tree.expandAll()
-            previousSelection?.let(::selectEntry)
         }
     }
 
