@@ -1,10 +1,17 @@
 package com.github.cvzakharchenko.worktreediff.toolWindow
 
 import com.github.cvzakharchenko.worktreediff.git.FileComparison
+import com.intellij.ide.CommonActionsManager
+import com.intellij.icons.AllIcons
+import com.intellij.openapi.actionSystem.AnAction
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.project.DumbAwareToggleAction
 import com.intellij.openapi.vcs.FilePath
 import com.intellij.openapi.vcs.actions.VcsContextFactory
 import com.intellij.openapi.vcs.changes.ui.ChangesBrowserNode
+import com.intellij.openapi.vcs.changes.ui.ChangesGroupingSupport
 import com.intellij.openapi.vcs.changes.ui.ChangesListView
 import com.intellij.openapi.vcs.changes.ui.ChangesTree
 import com.intellij.openapi.vcs.changes.ui.TreeModelBuilder
@@ -19,14 +26,18 @@ internal class ComparisonTreePanel(
     private val project: Project,
     private val onOpenDiff: () -> Unit,
 ) {
-    private val tree = object : ChangesListView(project, false) {}
-    private val filePathFactory = VcsContextFactory.getInstance()
-
     private var entries: List<FileComparison> = emptyList()
     private var filePathsByRelativePath: Map<String, FilePath> = emptyMap()
     private var entriesByAbsolutePath: Map<Path, FileComparison> = emptyMap()
     private var selectedRelativePath: String? = null
     private var suppressSelectionOpen = false
+
+    private val tree = object : ChangesListView(project, false) {
+        override fun rebuildTree() {
+            rebuildTreeModel()
+        }
+    }
+    private val filePathFactory = VcsContextFactory.getInstance()
 
     val component: JComponent = JPanel(BorderLayout()).apply {
         add(ScrollPaneFactory.createScrollPane(tree), BorderLayout.CENTER)
@@ -61,7 +72,7 @@ internal class ComparisonTreePanel(
             selectedRelativePath = null
         }
 
-        rebuildTree()
+        rebuildTreeModel()
     }
 
     fun setEnabled(enabled: Boolean) {
@@ -73,7 +84,7 @@ internal class ComparisonTreePanel(
         filePathsByRelativePath = emptyMap()
         entriesByAbsolutePath = emptyMap()
         selectedRelativePath = null
-        rebuildTree()
+        rebuildTreeModel()
     }
 
     fun selectedEntry(): FileComparison? {
@@ -88,6 +99,15 @@ internal class ComparisonTreePanel(
 
     fun visibleEntries(): List<FileComparison> = entries
 
+    fun titleActions(): List<AnAction> {
+        val commonActions = CommonActionsManager.getInstance()
+        return listOf(
+            GroupByActionGroup(),
+            commonActions.createExpandAllHeaderAction(tree.treeExpander, tree),
+            commonActions.createCollapseAllHeaderAction(tree.treeExpander, tree),
+        )
+    }
+
     fun selectEntry(relativePath: String) {
         selectedRelativePath = relativePath
         filePathsByRelativePath[relativePath]?.let {
@@ -97,7 +117,7 @@ internal class ComparisonTreePanel(
         }
     }
 
-    private fun rebuildTree() {
+    private fun rebuildTreeModel() {
         val previousSelection = selectedEntry()?.relativePath ?: selectedRelativePath
         selectedRelativePath = previousSelection
 
@@ -125,6 +145,34 @@ internal class ComparisonTreePanel(
             action()
         } finally {
             suppressSelectionOpen = wasSuppressed
+        }
+    }
+
+    private inner class GroupByActionGroup : DefaultActionGroup("Group By", true) {
+        init {
+            templatePresentation.icon = AllIcons.Actions.GroupBy
+            templatePresentation.description = "Group files"
+            add(GroupingToggleAction("Directory", ChangesGroupingSupport.DIRECTORY_GROUPING))
+            add(GroupingToggleAction("Module", ChangesGroupingSupport.MODULE_GROUPING))
+            add(GroupingToggleAction("Repository", ChangesGroupingSupport.REPOSITORY_GROUPING))
+        }
+    }
+
+    private inner class GroupingToggleAction(
+        text: String,
+        private val groupingKey: String,
+    ) : DumbAwareToggleAction(text) {
+        override fun update(event: AnActionEvent) {
+            super.update(event)
+            event.presentation.isEnabled = tree.groupingSupport.isAvailable(groupingKey)
+        }
+
+        override fun isSelected(event: AnActionEvent): Boolean =
+            tree.groupingSupport.get(groupingKey)
+
+        override fun setSelected(event: AnActionEvent, state: Boolean) {
+            tree.groupingSupport.set(groupingKey, state)
+            rebuildTreeModel()
         }
     }
 }

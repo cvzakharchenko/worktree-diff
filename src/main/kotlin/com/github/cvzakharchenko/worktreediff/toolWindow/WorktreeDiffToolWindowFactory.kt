@@ -7,8 +7,12 @@ import com.github.cvzakharchenko.worktreediff.git.WorktreeComparisonService
 import com.github.cvzakharchenko.worktreediff.git.WorktreeInfo
 import com.github.cvzakharchenko.worktreediff.git.WorktreeService
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.actionSystem.AnAction
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.DumbAware
+import com.intellij.openapi.project.DumbAwareToggleAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.wm.ToolWindow
@@ -17,11 +21,10 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.content.ContentFactory
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
-import java.awt.FlowLayout
 import java.nio.file.Path
+import javax.swing.Icon
 import javax.swing.DefaultComboBoxModel
 import javax.swing.JButton
-import javax.swing.JCheckBox
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.SwingUtilities
@@ -32,6 +35,7 @@ class WorktreeDiffToolWindowFactory : ToolWindowFactory, DumbAware {
         val panel = WorktreeDiffPanel(project)
         val content = ContentFactory.getInstance().createContent(panel.component, null, false)
         toolWindow.contentManager.addContent(content)
+        toolWindow.setTitleActions(panel.titleActions())
     }
 
     override fun shouldBeAvailable(project: Project): Boolean = true
@@ -45,13 +49,41 @@ private class WorktreeDiffPanel(
 ) {
     private val worktreeModel = DefaultComboBoxModel<WorktreeInfo>()
     private val worktreeComboBox = ComboBox(worktreeModel)
-    private val includeLocalChanges = JCheckBox("Include local changes")
-    private val ignoreLineEndings = JCheckBox("Ignore line endings")
     private val refreshButton = JButton(AllIcons.Actions.Refresh).apply {
         toolTipText = "Refresh"
     }
     private val statusLabel = JBLabel()
     private val fileTree = ComparisonTreePanel(project, ::openSelectedDiff)
+
+    private var includeLocalChanges = false
+    private var ignoreLineEndings = false
+    private var optionsEnabled = false
+
+    private val includeLocalChangesAction = BooleanOptionAction(
+        text = "Include Local Changes",
+        description = "Include files changed locally on either side even when their disk content matches.",
+        isEnabled = { optionsEnabled },
+        isSelected = { includeLocalChanges },
+        setSelected = {
+            includeLocalChanges = it
+            refreshSelectedComparison()
+        },
+    )
+    private val ignoreLineEndingsAction = BooleanOptionAction(
+        text = "Ignore Line Endings",
+        description = "Ignore CRLF, CR, and LF differences when filtering unchanged files.",
+        isEnabled = { optionsEnabled },
+        isSelected = { ignoreLineEndings },
+        setSelected = {
+            ignoreLineEndings = it
+            refreshSelectedComparison()
+        },
+    )
+    private val optionsAction = DefaultActionGroup("Options", "Comparison options", AllIcons.General.GearPlain).apply {
+        setPopup(true)
+        add(includeLocalChangesAction)
+        add(ignoreLineEndingsAction)
+    }
 
     private var repositoryRoot: Path? = null
     private var suppressSelectionEvents = false
@@ -70,12 +102,6 @@ private class WorktreeDiffPanel(
                 refreshSelectedComparison()
             }
         }
-        includeLocalChanges.addActionListener {
-            refreshSelectedComparison()
-        }
-        ignoreLineEndings.addActionListener {
-            refreshSelectedComparison()
-        }
         refreshButton.addActionListener {
             refreshWorktreesAndComparison()
         }
@@ -88,20 +114,16 @@ private class WorktreeDiffPanel(
         top.add(worktreeComboBox, BorderLayout.CENTER)
         top.add(refreshButton, BorderLayout.EAST)
 
-        val options = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0))
-        options.add(includeLocalChanges)
-        options.add(ignoreLineEndings)
-
-        return JPanel(BorderLayout(0, JBUI.scale(6))).apply {
-            add(top, BorderLayout.NORTH)
-            add(options, BorderLayout.SOUTH)
-        }
+        return top
     }
+
+    fun titleActions(): List<AnAction> =
+        listOf(optionsAction) + fileTree.titleActions()
 
     private fun refreshWorktreesAndComparison() {
         val selectedPath = selectedWorktree()?.path
-        val includeLocal = includeLocalChanges.isSelected
-        val ignoreEol = ignoreLineEndings.isSelected
+        val includeLocal = includeLocalChanges
+        val ignoreEol = ignoreLineEndings
         val generation = nextGeneration()
         setBusy("Refreshing worktrees...")
 
@@ -141,8 +163,8 @@ private class WorktreeDiffPanel(
     private fun refreshSelectedComparison() {
         val root = repositoryRoot ?: return refreshWorktreesAndComparison()
         val selected = selectedWorktree() ?: return clearFiles("No other worktrees found.")
-        val includeLocal = includeLocalChanges.isSelected
-        val ignoreEol = ignoreLineEndings.isSelected
+        val includeLocal = includeLocalChanges
+        val ignoreEol = ignoreLineEndings
         val generation = nextGeneration()
         setBusy("Refreshing comparison...")
 
@@ -223,8 +245,7 @@ private class WorktreeDiffPanel(
     private fun setControlsEnabled(enabled: Boolean) {
         refreshButton.isEnabled = enabled
         worktreeComboBox.isEnabled = enabled && worktreeModel.size > 0
-        includeLocalChanges.isEnabled = enabled && worktreeModel.size > 0
-        ignoreLineEndings.isEnabled = enabled && worktreeModel.size > 0
+        optionsEnabled = enabled && worktreeModel.size > 0
         fileTree.setEnabled(enabled)
     }
 
@@ -244,6 +265,27 @@ private class WorktreeDiffPanel(
                 fileTree.selectEntry(relativePath)
             }
         }
+    }
+}
+
+private class BooleanOptionAction(
+    text: String,
+    description: String,
+    private val isEnabled: () -> Boolean,
+    private val isSelected: () -> Boolean,
+    private val setSelected: (Boolean) -> Unit,
+) : DumbAwareToggleAction(text, description, null as Icon?) {
+
+    override fun update(event: AnActionEvent) {
+        super.update(event)
+        event.presentation.isEnabled = isEnabled()
+    }
+
+    override fun isSelected(event: AnActionEvent): Boolean =
+        isSelected()
+
+    override fun setSelected(event: AnActionEvent, state: Boolean) {
+        setSelected(state)
     }
 }
 

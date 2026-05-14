@@ -7,8 +7,7 @@ The plugin adds a **Worktree Diff** tool window with:
 - a dropdown of other worktrees for the current repository;
 - automatic selection of the first available worktree;
 - a refresh action;
-- a toggle to include all uncommitted changes from either side;
-- a toggle to ignore line-ending-only differences when filtering unchanged files;
+- tool-window title actions for comparison options, grouping, expanding, and collapsing;
 - a native IDE file tree of changed, modified, and untracked non-ignored files;
 - built-in IntelliJ diff views backed by the files on disk.
 - side-panel selection that opens files without taking focus and follows the active file while navigating a Worktree Diff diff chain.

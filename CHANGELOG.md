@@ -10,3 +10,6 @@
 - Added a native IDE file tree with active diff selection tracking.
 - Added an option to ignore line-ending-only differences when filtering unchanged files.
 - Added selection-driven file opening that keeps focus in the native file tree.
+- Added native file tree grouping, expand, and collapse actions.
+- Replaced text checkboxes with a compact comparison options menu.
+- Moved comparison options and native file tree actions into the tool window title.
