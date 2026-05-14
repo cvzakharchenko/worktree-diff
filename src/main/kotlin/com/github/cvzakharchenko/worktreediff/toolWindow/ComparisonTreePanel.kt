@@ -1,11 +1,14 @@
 package com.github.cvzakharchenko.worktreediff.toolWindow
 
+import com.github.cvzakharchenko.worktreediff.diff.EntryEditService
 import com.github.cvzakharchenko.worktreediff.git.FileComparison
 import com.intellij.ide.CommonActionsManager
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.components.service
+import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.DumbAwareToggleAction
 import com.intellij.openapi.vcs.FilePath
@@ -45,9 +48,9 @@ internal class ComparisonTreePanel(
 
     init {
         tree.emptyText.text = "No differences"
-        tree.selectionModel.selectionMode = TreeSelectionModel.SINGLE_TREE_SELECTION
+        tree.selectionModel.selectionMode = TreeSelectionModel.DISCONTIGUOUS_TREE_SELECTION
         tree.addSelectionListener {
-            selectedEntry()?.let {
+            singleSelectedEntry()?.let {
                 selectedRelativePath = it.relativePath
                 if (!suppressSelectionOpen) {
                     onOpenDiff()
@@ -55,10 +58,11 @@ internal class ComparisonTreePanel(
             }
         }
         tree.setDoubleClickAndEnterKeyHandler {
-            if (selectedEntry() != null) {
+            if (singleSelectedEntry() != null) {
                 onOpenDiff()
             }
         }
+        installPopupActions()
     }
 
     fun setEmptyText(message: String) {
@@ -91,13 +95,10 @@ internal class ComparisonTreePanel(
         rebuildTreeModel()
     }
 
-    fun selectedEntry(): FileComparison? {
-        val filePath = selectedFilePath() ?: return null
-        return entriesByAbsolutePath[filePath.normalizedAbsolutePath()]
-    }
+    fun selectedEntry(): FileComparison? = singleSelectedEntry()
 
     fun selectedVisibleIndex(): Int {
-        val entry = selectedEntry() ?: return -1
+        val entry = singleSelectedEntry() ?: return -1
         return entries.indexOfFirst { it.relativePath == entry.relativePath }
     }
 
@@ -122,7 +123,7 @@ internal class ComparisonTreePanel(
     }
 
     private fun rebuildTreeModel() {
-        val previousSelection = selectedEntry()?.relativePath ?: selectedRelativePath
+        val previousSelection = singleSelectedEntry()?.relativePath ?: selectedRelativePath
         selectedRelativePath = previousSelection
 
         val model = TreeModelBuilder.buildFromFilePaths(
@@ -137,9 +138,65 @@ internal class ComparisonTreePanel(
         }
     }
 
-    private fun selectedFilePath(): FilePath? {
-        val node = tree.selectionPath?.lastPathComponent as? ChangesBrowserNode<*>
-        return node?.userObject as? FilePath
+    private fun singleSelectedEntry(): FileComparison? {
+        val paths = tree.selectionPaths ?: return null
+        if (paths.size != 1) {
+            return null
+        }
+
+        val node = paths[0].lastPathComponent as? ChangesBrowserNode<*> ?: return null
+        if (node.childCount != 0) {
+            return null
+        }
+
+        val filePath = node.userObject as? FilePath ?: return null
+        return entriesByAbsolutePath[filePath.normalizedAbsolutePath()]
+    }
+
+    private fun collectSelectedEntries(): List<FileComparison> {
+        val paths = tree.selectionPaths ?: return emptyList()
+        val seen = LinkedHashSet<String>()
+        val selectedEntries = mutableListOf<FileComparison>()
+
+        for (path in paths) {
+            val node = path.lastPathComponent as? ChangesBrowserNode<*> ?: continue
+            collectEntriesUnder(node, seen, selectedEntries)
+        }
+
+        return selectedEntries
+    }
+
+    private fun collectEntriesUnder(
+        root: ChangesBrowserNode<*>,
+        seen: MutableSet<String>,
+        selectedEntries: MutableList<FileComparison>,
+    ) {
+        val stack = ArrayDeque<ChangesBrowserNode<*>>()
+        stack.addLast(root)
+        while (stack.isNotEmpty()) {
+            val current = stack.removeLast()
+            if (current.childCount == 0) {
+                val filePath = current.userObject as? FilePath ?: continue
+                val entry = entriesByAbsolutePath[filePath.normalizedAbsolutePath()] ?: continue
+                if (seen.add(entry.relativePath)) {
+                    selectedEntries.add(entry)
+                }
+            } else {
+                for (i in 0 until current.childCount) {
+                    val child = current.getChildAt(i) as? ChangesBrowserNode<*> ?: continue
+                    stack.addLast(child)
+                }
+            }
+        }
+    }
+
+    private fun installPopupActions() {
+        val group = DefaultActionGroup().apply {
+            add(EntryEditAction(EntryEditService.Mode.ACCEPT_LEFT))
+            add(EntryEditAction(EntryEditService.Mode.ACCEPT_RIGHT))
+            add(EntryEditAction(EntryEditService.Mode.SWAP))
+        }
+        tree.installPopupHandler(group)
     }
 
     private fun withSelectionOpenSuppressed(action: () -> Unit) {
@@ -177,6 +234,22 @@ internal class ComparisonTreePanel(
         override fun setSelected(event: AnActionEvent, state: Boolean) {
             tree.groupingSupport.set(groupingKey, state)
             rebuildTreeModel()
+        }
+    }
+
+    private inner class EntryEditAction(
+        private val mode: EntryEditService.Mode,
+    ) : DumbAwareAction(mode.actionText) {
+
+        override fun update(event: AnActionEvent) {
+            event.presentation.isEnabled = tree.isEnabled && collectSelectedEntries().isNotEmpty()
+        }
+
+        override fun actionPerformed(event: AnActionEvent) {
+            val selectedEntries = collectSelectedEntries()
+            if (selectedEntries.isNotEmpty()) {
+                project.service<EntryEditService>().apply(selectedEntries, mode)
+            }
         }
     }
 }

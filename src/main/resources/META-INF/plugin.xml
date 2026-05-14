@@ -15,5 +15,6 @@
             id="Worktree Diff"
             anchor="right"
             factoryClass="com.github.cvzakharchenko.worktreediff.toolWindow.WorktreeDiffToolWindowFactory"/>
+        <notificationGroup id="WorktreeDiff.Notifications" displayType="BALLOON"/>
     </extensions>
 </idea-plugin>

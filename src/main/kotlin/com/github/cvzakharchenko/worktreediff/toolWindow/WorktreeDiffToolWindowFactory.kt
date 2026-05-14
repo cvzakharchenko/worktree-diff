@@ -54,7 +54,7 @@ private class WorktreeDiffPanel(
     private val project: Project,
     private val worktreeService: WorktreeService = WorktreeService(),
     private val comparisonService: WorktreeComparisonService = WorktreeComparisonService(),
-    private val diffOpener: DiffOpener = DiffOpener(project),
+    private val diffOpener: DiffOpener = project.service<DiffOpener>(),
 ) {
     private val fileTree = ComparisonTreePanel(project, ::openSelectedDiff)
     private val worktreeModel = DefaultComboBoxModel<WorktreeInfo>()
