@@ -65,6 +65,8 @@ private class WorktreeDiffPanel(
 
     private var includeLocalChanges = settings.includeLocalChanges
     private var ignoreLineEndings = settings.ignoreLineEndings
+    private var ignoreStagedChanges = settings.ignoreStagedChanges
+    private var ignoreHeadChanges = settings.ignoreHeadChanges
     private var refreshEnabled = false
     private var optionsAvailable = false
     private var repositoryRoot: Path? = null
@@ -93,10 +95,34 @@ private class WorktreeDiffPanel(
             refreshSelectedComparison()
         },
     )
+    private val ignoreStagedChangesAction = BooleanOptionAction(
+        text = "Ignore Staged Changes",
+        description = "Only use unstaged tracked changes and untracked files when collecting local changes.",
+        isEnabled = { optionsAvailable },
+        isSelected = { ignoreStagedChanges },
+        setSelected = {
+            ignoreStagedChanges = it
+            settings.ignoreStagedChanges = it
+            refreshSelectedComparison()
+        },
+    )
+    private val ignoreHeadChangesAction = BooleanOptionAction(
+        text = "Ignore Head Differences",
+        description = "Skip comparison between the two worktree HEAD revisions.",
+        isEnabled = { optionsAvailable },
+        isSelected = { ignoreHeadChanges },
+        setSelected = {
+            ignoreHeadChanges = it
+            settings.ignoreHeadChanges = it
+            refreshSelectedComparison()
+        },
+    )
     private val optionsAction = DefaultActionGroup("Options", "Comparison options", AllIcons.General.GearPlain).apply {
         setPopup(true)
         add(includeLocalChangesAction)
         add(ignoreLineEndingsAction)
+        add(ignoreStagedChangesAction)
+        add(ignoreHeadChangesAction)
     }
     private val refreshAction = object : DumbAwareAction(
         "Refresh",
@@ -141,9 +167,13 @@ private class WorktreeDiffPanel(
         val selectedPath = selectedWorktree()?.path
         val includeLocal = includeLocalChanges
         val ignoreEol = ignoreLineEndings
+        val ignoreStaged = ignoreStagedChanges
+        val ignoreHead = ignoreHeadChanges
         val generation = nextGeneration()
         telemetry.metric("includeLocalChanges", includeLocal)
         telemetry.metric("ignoreLineEndings", ignoreEol)
+        telemetry.metric("ignoreStagedChanges", ignoreStaged)
+        telemetry.metric("ignoreHeadChanges", ignoreHead)
         setBusy("Refreshing worktrees...")
 
         ApplicationManager.getApplication().executeOnPooledThread {
@@ -164,7 +194,15 @@ private class WorktreeDiffPanel(
                 }
                 val comparison = selected?.let {
                     telemetry.measure("compareTotal") {
-                        comparisonService.compare(root, it, includeLocal, ignoreEol, telemetry)
+                        comparisonService.compare(
+                            currentRoot = root,
+                            selectedWorktree = it,
+                            includeLocalChanges = includeLocal,
+                            ignoreLineEndings = ignoreEol,
+                            ignoreStagedChanges = ignoreStaged,
+                            ignoreHeadChanges = ignoreHead,
+                            telemetry = telemetry,
+                        )
                     }
                 } ?: ComparisonResult(emptyList())
 
@@ -189,16 +227,28 @@ private class WorktreeDiffPanel(
         val selected = selectedWorktree() ?: return clearFiles("No other worktrees found.")
         val includeLocal = includeLocalChanges
         val ignoreEol = ignoreLineEndings
+        val ignoreStaged = ignoreStagedChanges
+        val ignoreHead = ignoreHeadChanges
         val generation = nextGeneration()
         val telemetry = RefreshTelemetry("refreshSelectedComparison")
         telemetry.metric("includeLocalChanges", includeLocal)
         telemetry.metric("ignoreLineEndings", ignoreEol)
+        telemetry.metric("ignoreStagedChanges", ignoreStaged)
+        telemetry.metric("ignoreHeadChanges", ignoreHead)
         setBusy("Refreshing comparison...")
 
         ApplicationManager.getApplication().executeOnPooledThread {
             val result = runCatching {
                 val comparison = telemetry.measure("compareTotal") {
-                    comparisonService.compare(root, selected, includeLocal, ignoreEol, telemetry)
+                    comparisonService.compare(
+                        currentRoot = root,
+                        selectedWorktree = selected,
+                        includeLocalChanges = includeLocal,
+                        ignoreLineEndings = ignoreEol,
+                        ignoreStagedChanges = ignoreStaged,
+                        ignoreHeadChanges = ignoreHead,
+                        telemetry = telemetry,
+                    )
                 }
                 RefreshState(
                     repositoryRoot = root,

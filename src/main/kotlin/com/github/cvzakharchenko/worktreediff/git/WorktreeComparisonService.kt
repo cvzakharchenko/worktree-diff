@@ -22,28 +22,42 @@ class WorktreeComparisonService(
         selectedWorktree: WorktreeInfo,
         includeLocalChanges: Boolean,
         ignoreLineEndings: Boolean = false,
+        ignoreStagedChanges: Boolean = false,
+        ignoreHeadChanges: Boolean = false,
         telemetry: RefreshTelemetry? = null,
     ): ComparisonResult {
         val selectedRoot = selectedWorktree.path
-        val currentHeadFuture = asyncMeasured("leftHead", telemetry) {
-            worktreeService.currentHead(currentRoot)
+        val currentHeadFuture = if (ignoreHeadChanges) {
+            CompletableFuture.completedFuture(null)
+        } else {
+            asyncMeasured("leftHead", telemetry) {
+                worktreeService.currentHead(currentRoot)
+            }
         }
-        val selectedHeadFuture = asyncMeasured("rightHead", telemetry) {
-            worktreeService.currentHead(selectedRoot)
+        val selectedHeadFuture = if (ignoreHeadChanges) {
+            CompletableFuture.completedFuture(null)
+        } else {
+            asyncMeasured("rightHead", telemetry) {
+                worktreeService.currentHead(selectedRoot)
+            }
         }
         val leftLocalChangesFuture = asyncMeasured("leftStatus", telemetry) {
-            localChangePaths(currentRoot)
+            localChangePaths(currentRoot, ignoreStagedChanges)
         }
         val rightLocalChangesFuture = asyncMeasured("rightStatus", telemetry) {
-            localChangePaths(selectedRoot)
+            localChangePaths(selectedRoot, ignoreStagedChanges)
         }
 
-        val headPaths = headDiffPaths(
-            currentRoot = currentRoot,
-            currentHead = currentHeadFuture.await(),
-            selectedHead = selectedHeadFuture.await(),
-            telemetry = telemetry,
-        )
+        val headPaths = if (ignoreHeadChanges) {
+            emptySet()
+        } else {
+            headDiffPaths(
+                currentRoot = currentRoot,
+                currentHead = currentHeadFuture.await(),
+                selectedHead = selectedHeadFuture.await(),
+                telemetry = telemetry,
+            )
+        }
         val leftLocalChanges = leftLocalChangesFuture.await()
         val rightLocalChanges = rightLocalChangesFuture.await()
 
@@ -112,7 +126,7 @@ class WorktreeComparisonService(
         }
     }
 
-    private fun localChangePaths(root: Path): Set<String> =
+    private fun localChangePaths(root: Path, ignoreStagedChanges: Boolean): Set<String> =
         parseStatusPaths(
             git.runBytes(
                 root,
@@ -122,6 +136,7 @@ class WorktreeComparisonService(
                 "--untracked-files=all",
                 "--no-renames",
             ),
+            ignoreStagedChanges,
         )
 
     internal fun parsePathList(output: ByteArray): Set<String> =
@@ -132,14 +147,20 @@ class WorktreeComparisonService(
             .filter { it.isNotBlank() }
             .toSet()
 
-    internal fun parseStatusPaths(output: ByteArray): Set<String> =
+    internal fun parseStatusPaths(output: ByteArray, ignoreStagedChanges: Boolean = false): Set<String> =
         output.toNulSeparatedStrings()
             .asSequence()
             .filter { it.length >= 4 }
             .filterNot { it.startsWith("!!") }
+            .filter { shouldIncludeStatusEntry(it, ignoreStagedChanges) }
             .map { normalizeGitPath(it.substring(3)) }
             .filter { it.isNotBlank() }
             .toSet()
+
+    private fun shouldIncludeStatusEntry(entry: String, ignoreStagedChanges: Boolean): Boolean =
+        !ignoreStagedChanges ||
+            entry.startsWith("??") ||
+            entry[1] != ' '
 
     internal fun resolveGitPath(root: Path, relativePath: String): Path {
         val resolved = root.resolve(relativePath.replace('/', root.fileSystem.separator.single())).normalize()

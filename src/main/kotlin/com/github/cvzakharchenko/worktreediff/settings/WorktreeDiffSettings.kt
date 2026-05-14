@@ -26,8 +26,22 @@ class WorktreeDiffSettings : SimplePersistentStateComponent<WorktreeDiffSettings
             state.ignoreLineEndings = value
         }
 
+    var ignoreStagedChanges: Boolean
+        get() = state.ignoreStagedChanges
+        set(value) {
+            state.ignoreStagedChanges = value
+        }
+
+    var ignoreHeadChanges: Boolean
+        get() = state.ignoreHeadChanges
+        set(value) {
+            state.ignoreHeadChanges = value
+        }
+
     class State : BaseState() {
         var includeLocalChanges by property(false)
         var ignoreLineEndings by property(true)
+        var ignoreStagedChanges by property(false)
+        var ignoreHeadChanges by property(false)
     }
 }

@@ -109,6 +109,59 @@ class WorktreeComparisonServiceTest {
         assertEquals(listOf("tracked.txt"), comparison.entries.map { it.relativePath })
     }
 
+    @Test
+    fun `staged only changes are excluded when staged changes are ignored`() = withRepository { main, other ->
+        main.resolve("tracked.txt").writeText("staged in main\n")
+        git(main, "add", "tracked.txt")
+
+        val normal = compare(main, other, includeLocalChanges = false)
+        val ignored = compare(main, other, includeLocalChanges = false, ignoreStagedChanges = true)
+
+        assertEquals(listOf("tracked.txt"), normal.entries.map { it.relativePath })
+        assertTrue(ignored.entries.isEmpty())
+    }
+
+    @Test
+    fun `mixed staged and unstaged changes are included when staged changes are ignored`() = withRepository { main, other ->
+        main.resolve("tracked.txt").writeText("staged in main\n")
+        git(main, "add", "tracked.txt")
+        main.resolve("tracked.txt").writeText("unstaged in main\n")
+
+        val comparison = compare(main, other, includeLocalChanges = false, ignoreStagedChanges = true)
+
+        assertEquals(listOf("tracked.txt"), comparison.entries.map { it.relativePath })
+    }
+
+    @Test
+    fun `untracked files are included when staged changes are ignored`() = withRepository { main, other ->
+        main.resolve("new.txt").writeText("created in main\n")
+
+        val comparison = compare(main, other, includeLocalChanges = false, ignoreStagedChanges = true)
+
+        assertEquals(listOf("new.txt"), comparison.entries.map { it.relativePath })
+    }
+
+    @Test
+    fun `head differences are excluded when head changes are ignored`() = withRepository { main, other ->
+        other.resolve("tracked.txt").writeText("other head\n")
+        git(other, "commit", "-am", "change on other")
+
+        val normal = compare(main, other, includeLocalChanges = false)
+        val ignored = compare(main, other, includeLocalChanges = false, ignoreHeadChanges = true)
+
+        assertEquals(listOf("tracked.txt"), normal.entries.map { it.relativePath })
+        assertTrue(ignored.entries.isEmpty())
+    }
+
+    @Test
+    fun `local changes are included when head changes are ignored`() = withRepository { main, other ->
+        main.resolve("tracked.txt").writeText("changed in main\n")
+
+        val comparison = compare(main, other, includeLocalChanges = false, ignoreHeadChanges = true)
+
+        assertEquals(listOf("tracked.txt"), comparison.entries.map { it.relativePath })
+    }
+
     private fun withRepository(testBody: (Path, Path) -> Unit) {
         val root = Files.createTempDirectory("worktree-diff-test-")
         tempRoots.add(root)
@@ -135,10 +188,19 @@ class WorktreeComparisonServiceTest {
         other: Path,
         includeLocalChanges: Boolean,
         ignoreLineEndings: Boolean = false,
+        ignoreStagedChanges: Boolean = false,
+        ignoreHeadChanges: Boolean = false,
     ): ComparisonResult {
         val service = WorktreeService()
         val selected = service.listOtherWorktrees(main).single { it.path == other.toRealPath() }
-        return WorktreeComparisonService().compare(main, selected, includeLocalChanges, ignoreLineEndings)
+        return WorktreeComparisonService().compare(
+            currentRoot = main,
+            selectedWorktree = selected,
+            includeLocalChanges = includeLocalChanges,
+            ignoreLineEndings = ignoreLineEndings,
+            ignoreStagedChanges = ignoreStagedChanges,
+            ignoreHeadChanges = ignoreHeadChanges,
+        )
     }
 
     private fun git(workingDirectory: Path, vararg arguments: String): String {
